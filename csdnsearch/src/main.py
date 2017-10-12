@@ -5,6 +5,7 @@ import requests
 import re
 import threading
 from collections import  namedtuple
+from enum import Enum
 from HTMLParser import  HTMLParser
 from wx import _windows_, wxEVT_HOTKEY
 
