@@ -1,9 +1,6 @@
 # -*- encoding:utf-8  -*-
 
-import wx
-import requests
-import re
-import threading
+import wx,requests,re,threading
 from collections import  namedtuple
 from enum import Enum
 from HTMLParser import  HTMLParser
@@ -12,7 +9,8 @@ from wx import _windows_, wxEVT_HOTKEY
 T_USERAGENT="Mozilla/5.0 (Windows NT 6.1; rv:52.0) Gecko/20100101 Firefox/52.0"
 RE_LISTCONTENT=r'(?P<content><dl class="search-list.*?</dl> -->.*)+'
 RE_LISTEXTRACT=r'<dd.*?<dt.*?<a.*?href="(?P<url>.*?)".*?>(?P<title>.*?)</a>'
-RE_ARTICLECONTENT=r'<article>(?P<content>.*?)</article>'
+RE_ARTICLECONTENT=[r'<article>(?P<content>.*?)</article>',
+                   r'<body>(?P<content>.*?)</body>',]
 
 
 ResItem=namedtuple("ResItem","title url details")
@@ -28,6 +26,7 @@ class MainFrame(wx.Frame):
         self.tc=wx.TextCtrl(self.panel,style=wx.TE_PROCESS_ENTER)
         self.srchbtn=wx.Button(self.panel,label=u"搜索(&S)")
         self.lc=wx.ListCtrl(self.panel,style=wx.LC_REPORT | wx.LC_NO_HEADER)
+        self.prebtn=wx.Button(self.panel,label=u"上一页(&P)")
         self.prebtn=wx.Button(self.panel,label=u"上一页(&P)")
         self.nextbtn=wx.Button(self.panel,label=u"下一页(&N)")
         self.srchbtn.Bind(wx.EVT_BUTTON,self.srchbtnclick)
@@ -116,17 +115,24 @@ class SearchThread(threading.Thread):
         self.url=url
         self.srchstring=srchstring
         self.pagenum=pagenum
+        
     def run(self):
         self.window.resiteems=list()
-        matchs=None
         try:
             html=requests.get(self.url,
                               params={"t":"blog","q":self.srchstring,"p":self.pagenum},
                               headers={"User-Agent":T_USERAGENT}).text
+        except Exception as e:
+            wx.MessageBox(u"网络连接异常！",u"CSDN 博客搜索")
+            return None
+            
+        try:
             content=re.compile(RE_LISTCONTENT,re.S).search(html).group("content")
             matchs=re.compile(RE_LISTEXTRACT, re.S).finditer(content)
         except Exception as e:
-            wx.MessageBox(u"网络连接异常！",u"CSDN 博客搜索")
+            wx.MessageBox(u"网页解析出错！")
+            return None
+            
         if matchs:
             for m in matchs:
                 title=m.group("title").replace("<em>","").replace("</em>","")
@@ -141,19 +147,25 @@ class ShowtextThread(threading.Thread):
         self.url=url
         self.title=title
     def run(self):
-        text=str()
         try:
             html=requests.get(self.url,headers={"User-Agent":T_USERAGENT}).text
-            STD(html).ShowModal()
+#             STD(html).ShowModal()
             
-            text=re.compile(RE_ARTICLECONTENT, re.S).search(html).group("content")
-            text=re.compile(r'<[^>]*?>').sub("",text)
-            text=HTMLParser().unescape(text)
-            text=re.compile(r'(\n+)|((\r\n)+)').sub(r'\n',text)
         except:
             wx.MessageBox(u"网络连接异常！",u"CSDN 博客搜索")
-        if text:
-            wx.CallAfter(self.window.showtext,self.title,text)
+            return None
+            
+        for rt in RE_ARTICLECONTENT:
+            m=re.compile(rt, re.S).search(html)
+            if m:    break
+             
+        text=m.group("content")
+        
+        text=re.compile(r'<[^>]*?>').sub("",text)
+        text=HTMLParser().unescape(text)
+        text=re.compile(r'(\n+)|((\r\n)+)').sub(r'\n',text)
+        
+        wx.CallAfter(self.window.showtext,self.title,text)
         
 class ShowtextFrame(wx.Frame):
     def __init__(self,parent,title,text):
