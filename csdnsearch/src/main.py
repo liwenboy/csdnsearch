@@ -10,6 +10,7 @@ T_USERAGENT="Mozilla/5.0 (Windows NT 6.1; rv:52.0) Gecko/20100101 Firefox/52.0"
 RE_LISTCONTENT=r'(?P<content><dl class="search-list.*?</dl> -->.*)+'
 RE_LISTEXTRACT=r'<dd.*?<dt.*?<a.*?href="(?P<url>.*?)".*?>(?P<title>.*?)</a>'
 RE_ARTICLECONTENT=[r'<article>(?P<content>.*?)</article>',
+                   r'<div id="article_details" class="details">(?P<content>.*?)<!-- Baidu Button BEGIN -->',
                    r'<body>(?P<content>.*?)</body>',]
 
 
@@ -161,7 +162,10 @@ class ShowtextThread(threading.Thread):
              
         text=m.group("content")
         
+        text=re.compile(r'<script.*?>.*?</script>',re.S).sub("",text)
+        text=re.compile(r'<style.*?>.*?</style>',re.S).sub("",text)
         text=re.compile(r'<[^>]*?>').sub("",text)
+        text=re.compile(r'^\s*?$',re.M).sub("",text)
         text=HTMLParser().unescape(text)
         text=re.compile(r'(\n+)|((\r\n)+)').sub(r'\n',text)
         
