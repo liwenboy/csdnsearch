@@ -13,6 +13,13 @@ RE_ARTICLECONTENT=[r'<article>(?P<content>.*?)</article>',
                    r'<div id="article_details" class="details">(?P<content>.*?)<!-- Baidu Button BEGIN -->',
                    r'<body>(?P<content>.*?)</body>',]
 
+Match_Script=re.compile(r'<script.*?>.*?</script>',re.S)
+Match_Style=re.compile(r'<style.*?>.*?</style>',re.S)
+Match_HtmlTags=re.compile(r'<[^>]*?>')
+Match_NoneLine=re.compile(r'^\s*?$',re.M)
+Match_NoneLines=re.compile(r'(^\n+)|((^\r\n)+)',re.M)
+
+Match_List=[Match_Style,Match_Script,Match_HtmlTags,Match_NoneLine,Match_NoneLines]
 
 ResItem=namedtuple("ResItem","title url details")
 HOTKEYID=wx.NewId()
@@ -162,12 +169,10 @@ class ShowtextThread(threading.Thread):
              
         text=m.group("content")
         
-        text=re.compile(r'<script.*?>.*?</script>',re.S).sub("",text)
-        text=re.compile(r'<style.*?>.*?</style>',re.S).sub("",text)
-        text=re.compile(r'<[^>]*?>').sub("",text)
-        text=re.compile(r'^\s*?$',re.M).sub("",text)
+        for m in Match_List:
+            text=m.sub('',text)
+        
         text=HTMLParser().unescape(text)
-        text=re.compile(r'(\n+)|((\r\n)+)').sub(r'\n',text)
         
         wx.CallAfter(self.window.showtext,self.title,text)
         
