@@ -1,223 +1,215 @@
-# -*- encoding:utf-8  -*-
+#  -*-    coding:UTF-8    -*-
 
-import wx,requests,re,threading
-from collections import  namedtuple
-from enum import Enum
-from HTMLParser import  HTMLParser
-from wx import _windows_, wxEVT_HOTKEY
+import wx
+import threading
+import requests
+import re
+from collections import namedtuple
 
-T_USERAGENT="Mozilla/5.0 (Windows NT 6.1; rv:52.0) Gecko/20100101 Firefox/52.0"
-RE_LISTCONTENT=r'(?P<content><dl class="search-list.*?</dl> -->.*)+'
-RE_LISTEXTRACT=r'<dd.*?<dt.*?<a.*?href="(?P<url>.*?)".*?>(?P<title>.*?)</a>'
-RE_ARTICLECONTENT=[r'<article>(?P<content>.*?)</article>',
-                   r'<div id="article_details" class="details">(?P<content>.*?)<!-- Baidu Button BEGIN -->',
-                   r'<body>(?P<content>.*?)</body>',]
-
-Match_Script=re.compile(r'<script.*?>.*?</script>',re.S)
-Match_Style=re.compile(r'<style.*?>.*?</style>',re.S)
-Match_HtmlTags=re.compile(r'<[^>]*?>')
-Match_NoneLine=re.compile(r'^\s*?$',re.M)
-Match_NoneLines=re.compile(r'(^\n+)|((^\r\n)+)',re.M)
-
-Match_List=[Match_Style,Match_Script,Match_HtmlTags,Match_NoneLine,Match_NoneLines]
-
-ResItem=namedtuple("ResItem","title url details")
-HOTKEYID=wx.NewId()
+TITLE="CSDN_博客搜索"
+MAINURL="http://so.csdn.net/so/search/s.do?"
+USERAGENT="Mozilla/5.0 (Windows NT 6.1; rv:52.0) Gecko/20100101 Firefox/52.0"
+FIRSTSRCH,ADDMORE,SHOWTEXT=tuple(range(3))
+Item=namedtuple("Item", "title url")
 
 class MainFrame(wx.Frame):
-    def __init__(self):
-        super(MainFrame,self).__init__(parent=None,
-                                       title=u"CSDN 博客搜索",size=(800,600))
+
+    def __init__ (self):
+        super().__init__(None, -1, title=TITLE, size=(800, 600))
         self.Center()
-        
         self.panel=wx.Panel(self)
-        self.tc=wx.TextCtrl(self.panel,style=wx.TE_PROCESS_ENTER)
-        self.srchbtn=wx.Button(self.panel,label=u"搜索(&S)")
-        self.lc=wx.ListCtrl(self.panel,style=wx.LC_REPORT | wx.LC_NO_HEADER)
-        self.prebtn=wx.Button(self.panel,label=u"上一页(&P)")
-        self.prebtn=wx.Button(self.panel,label=u"上一页(&P)")
-        self.nextbtn=wx.Button(self.panel,label=u"下一页(&N)")
-        self.srchbtn.Bind(wx.EVT_BUTTON,self.srchbtnclick)
-        self.tc.Bind(wx.EVT_TEXT_ENTER,self.srchbtnclick)
-        self.prebtn.Bind(wx.EVT_BUTTON,self.prebtnclick)
-        self.nextbtn.Bind(wx.EVT_BUTTON,self.nextbtnclick)
-        self.lc.Bind(wx.EVT_LIST_ITEM_ACTIVATED,self.itemactivated)
-        self.lc.Bind(wx.EVT_KEY_DOWN,self.keydown)
-        self.Bind(wx.EVT_HOTKEY,self.hotkey)
-        self.RegisterHotKey(HOTKEYID,0,120)
+        self.tc=wx.TextCtrl(self.panel, style=wx.TE_PROCESS_ENTER)
+        self.btn=wx.Button(self.panel, label=u"搜索(&S)")
+        self.lc=wx.ListCtrl(self.panel, style=wx.LC_REPORT | \
+                            wx.LC_NO_HEADER | wx.LC_SINGLE_SEL)
+        self.std=ShowText(self)
         
-        self.mainurl="http://so.csdn.net/so/search/s.do"
-        self.resiteems=[]
-        self.srchstring=""
-        self.pagenum=1
-        
+        self.btn.Bind(wx.EVT_BUTTON, self.btnDown)
+        self.tc.Bind(wx.EVT_TEXT_ENTER, self.btnDown)
+        self.lc.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.itemactivated)
+        self.lc.Bind(wx.EVT_CONTEXT_MENU, self.onpopmenu)
+
+        self.creatememu()
         self.layout()
         
-    def srchbtnclick(self,evt):
-        text=self.tc.Value.strip()
-        if  text:
-            self.srchstring=text
-            self.pagenum=1
-            SearchThread(self,self.mainurl,self.srchstring,self.pagenum).start()
-            self.lc.SetFocus()
-    
-    def prebtnclick(self,evt):
-        if self.srchstring !="" and self.pagenum >1:
-            self.pagenum-=1
-            SearchThread(self,self.mainurl,self.srchstring,self.pagenum).start()
-            self.lc.SetFocus()
-    
-    def nextbtnclick(self,evt):
-        if self.srchstring !="":
-            self.pagenum+=1
-            SearchThread(self,self.mainurl,self.srchstring,self.pagenum).start()
-            self.lc.SetFocus()
-    
-    def itemactivated(self,evt):
-        r=self.resiteems[evt.GetIndex()]
-        ShowtextThread(self,r.url,r.title).start()
+    def creatememu(self):
+        self._pm=wx.Menu()
+        browser=self._pm.Append(-1, "浏览器打开(&o)")
+        self.Bind(wx.EVT_MENU, self.brsopen, browser)
         
-    def keydown(self,evt):
-        if evt.KeyCode==ord("D") and evt.altDown:
-            self.tc.SetFocus()
-            self.tc.SelectAll()
-        if evt.KeyCode==wx.WXK_PAGEUP:
-            self.prebtnclick(None)
-        if evt.KeyCode==wx.WXK_PAGEDOWN:
-            self.nextbtnclick(None)
-        evt.Skip()
+    def brsopen(self, evt):
+        from webbrowser import open
+        open(self.Items[self.lc.GetFocusedItem()].url)
+        
+    def onpopmenu(self, evt):
+        if self.lc.GetFocusedItem() in range(self.lc.GetItemCount()-1):
+            self.lc.PopupMenu(self._pm)
     
-    def hotkey(self,evt):
-        if self.IsShown(): self.Hide()
-        else:  self.Show()
-        evt.Skip()            
-    
+    def btnDown(self,evt):
+        self.strSrch=self.tc.Value.strip()
+        if self.strSrch:
+            self.state=FIRSTSRCH
+            self.pagenum=1
+            urltail=f"q={self.strSrch}&t=blog&o=&s=&l=&f=&p={self.pagenum}"
+            GetHtml(self, MAINURL+urltail).start()
+        
+    def addmore(self):
+        self.state=ADDMORE
+        self.pagenum+=1
+        urltail=f"q={self.strSrch}&t=blog&o=&s=&l=&f=&p={self.pagenum}"
+        GetHtml(self, MAINURL+urltail).start()
+        
+    def itemactivated(self, evt):
+        self.idx=evt.GetIndex()
+        if self.lc.GetItem(self.idx).GetText()==u'加载更多...':
+            self.addmore()
+        else:
+            self.state=SHOWTEXT
+            GetHtml(self, self.Items[self.idx].url).start()
+        
     def updatelist(self):
         self.lc.ClearAll()
-        self.lc.InsertColumn(0,"",width=600)
-        for i,item in enumerate([j.title for j in self.resiteems]):
-            self.lc.InsertStringItem(i,item)
+        self.lc.InsertColumn(0, "", width=1000 )
+        for i,item in enumerate(j.title for j in self.Items):
+            self.lc.InsertItem(i,item)
+        from sys import maxsize
+        self.lc.InsertItem(maxsize,'加载更多...')
+        self.lc.SetFocus()
+        idx=0 if self.state==FIRSTSRCH else self.idx
+        self.lc.Focus(idx)
         
-    def showtext(self,title,text):
-        ShowtextFrame(self,title,text).Show()
-    
+    def NetBack(self, html):
+        if self.state in (FIRSTSRCH, ADDMORE):
+            self.Items=[] if self.state==FIRSTSRCH else self.Items
+            lst=parsehtmltolist(html)
+            if lst is None:
+                wx.MessageBox("解析出错！", "提示：")
+            else:
+                self.Items.extend([Item._make(i) for i in lst])
+                self.updatelist()
+        elif self.state==SHOWTEXT:
+            s=prettyhtml(html)
+            if s:
+                self.std.updatetext(self.Items[self.idx].title, s)
+                self.std.ShowModal()
+            else:
+                wx.MessageBox("解析出错！", "提示：")
+
     def layout(self):
-        self.hszer1=wx.BoxSizer(wx.HORIZONTAL)
-        self.hszer1.Add(self.tc,1,flag=wx.GROW)
-        self.hszer1.Add(self.srchbtn,flag=wx.ALIGN_RIGHT)
-        self.hszer2=wx.BoxSizer(wx.HORIZONTAL)
-        self.hszer2.Add(self.prebtn,flag=wx.ALIGN_LEFT)
-        self.hszer2.Add(wx.Size(80,20),1,wx.GROW)
-        self.hszer2.Add(self.nextbtn,flag=wx.ALIGN_RIGHT)
-        self.vszer=wx.BoxSizer(wx.VERTICAL)
-        self.vszer.Add(self.hszer1,flag=wx.GROW)
-        self.vszer.Add(self.lc,1,flag=wx.GROW)
-        self.vszer.Add(self.hszer2,flag=wx.GROW)
-        self.panel.SetSizer(self.vszer)
-        self.panel.Fit()
-        
-class SearchThread(threading.Thread):
-    def __init__(self,window,url,srchstring,pagenum):
-        super(SearchThread,self).__init__()
-        self.window=window
-        self.url=url
-        self.srchstring=srchstring
-        self.pagenum=pagenum
+        hszer=wx.BoxSizer(wx.HORIZONTAL)
+        hszer.Add(self.tc,1,flag=wx.GROW)
+        hszer.Add(self.btn,flag=wx.ALIGN_RIGHT)
+        vszer=wx.BoxSizer(wx.VERTICAL)
+        vszer.Add(hszer,flag=wx.GROW)
+        vszer.Add(self.lc,1,flag=wx.GROW)
+        self.panel.SetSizer(vszer)
+
+class GetHtml(threading.Thread):
+    
+    def __init__(self, window, url):
+        super().__init__()
+        self.window, self.url=window, url
         
     def run(self):
-        self.window.resiteems=list()
+        html=""
         try:
-            html=requests.get(self.url,
-                              params={"t":"blog","q":self.srchstring,"p":self.pagenum},
-                              headers={"User-Agent":T_USERAGENT}).text
+            html=requests.get(self.url, \
+                            headers={"User-Agent": USERAGENT}).text
+            if html:
+                wx.CallAfter(self.window.NetBack, html)
         except Exception as e:
-            wx.MessageBox(u"网络连接异常！",u"CSDN 博客搜索")
-            return None
+            print(str(e))
+            wx.MessageBox("网络异常！", "提示：")
             
-        try:
-            content=re.compile(RE_LISTCONTENT,re.S).search(html).group("content")
-            matchs=re.compile(RE_LISTEXTRACT, re.S).finditer(content)
-        except Exception as e:
-            wx.MessageBox(u"网页解析出错！")
-            return None
-            
-        if matchs:
-            for m in matchs:
-                title=m.group("title").replace("<em>","").replace("</em>","")
-                resitem=ResItem._make([title,m.group("url"),""])
-                self.window.resiteems.append(resitem)
-                wx.CallAfter(self.window.updatelist)
-        
-class ShowtextThread(threading.Thread):
-    def __init__(self,window,url,title):
-        super(ShowtextThread,self).__init__()
-        self.window=window
-        self.url=url
-        self.title=title
-    def run(self):
-        try:
-            html=requests.get(self.url,headers={"User-Agent":T_USERAGENT}).text
-#             STD(html).ShowModal()
-            
-        except:
-            wx.MessageBox(u"网络连接异常！",u"CSDN 博客搜索")
-            return None
-            
-        for rt in RE_ARTICLECONTENT:
-            m=re.compile(rt, re.S).search(html)
-            if m:    break
-             
-        text=m.group("content")
-        
-        for m in Match_List:
-            text=m.sub('',text)
-        
-        text=HTMLParser().unescape(text)
-        
-        wx.CallAfter(self.window.showtext,self.title,text)
-        
-class ShowtextFrame(wx.Frame):
-    def __init__(self,parent,title,text):
-        super(ShowtextFrame,self).__init__(
-            parent=parent,title=title,size=(800,600))
+class ShowText(wx.Dialog):
+    
+    def __init__(self, parent):
+        super().__init__(parent=parent, size=(800, 600), style=wx.DEFAULT_FRAME_STYLE)
         self.Center()
+        self.tc=wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_RICH2)
+        self.tc.Bind(wx.EVT_KEY_DOWN, self.kd)
+        self.Bind(wx.EVT_CLOSE, self.onclose)
         
-        self.panel=wx.Panel(self)
-        self.tc=wx.TextCtrl(self.panel,style=wx.TE_MULTILINE)
-        self.tc.Bind(wx.EVT_KEY_DOWN,self.keydown)
-        self.tc.SetValue(text)
+    def updatetext(self, title, text):
+        self._title, self._text=title, text
+        self.SetTitle(self._title)
+        self.tc.SetValue(self._text)
         
-        self.szer=wx.GridSizer(0,0,10,10)
-        self.szer.Add(self.tc,flag=wx.GROW)
-        self.panel.SetSizer(self.szer)
-        self.panel.Fit()
-        
-    def keydown(self,evt):
-        if evt.KeyCode in (wx.WXK_ESCAPE,wx.WXK_BACK,wx.WXK_RETURN):
-            self.Close()
+    def kd(self, evt):
         if evt.GetKeyCode() ==ord("C") and evt.controlDown:
             if wx.TheClipboard.Open():
-                self.tc.SelectAll()
-                wx.TheClipboard.SetData(wx.TextDataObject(self.tc.Value))
+                wx.TheClipboard.SetData(wx.TextDataObject(self._text))
                 wx.TheClipboard.Close()
+        elif evt.GetKeyCode()==ord("S") and evt.controlDown:
+            import codecs
+            with codecs.open(u".\\favorites\\%s.txt"%self._title, "w","utf-8") as f:
+                f.write(self._text)
+                wx.MessageBox(u"保存成功！", u"提示：")
+        elif evt.GetKeyCode() in (8, 27):        # Keys:ESC and BACK
+            self.Close()
         evt.Skip()
-        
-class STD(wx.Dialog):
-    def __init__(self,text):
-        super(STD,self).__init__(None,-1,"ShowText")
-        tc=wx.TextCtrl(self,value=text,style=wx.TE_MULTILINE)
-        
-class ThisApp(wx.App):
-    def OnInit(self):
-        self.mf=MainFrame()
-        self.SetTopWindow(self.mf)
-        self.mf.Show()
-        return True 
     
+    def onclose(self, evt):
+        self.Hide()  
+        self.Parent.lc.SetFocus()
+
+RE_LISTCONTENT=r'(?P<content><dl class="search-list.*?</dl>.*)+'
+RE_LISTEXTRACT=r'<dd.*?<dt.*?<a.*?href="(?P<url>.*?)".*?>(?P<title>.*?)</a>'
+RE_EM_TAG=r"(<em>)|(</em>)"
+
+def parsehtmltolist(html):
+    p_con=re.compile(RE_LISTCONTENT, flags=re.S)
+    p_list=re.compile(RE_LISTEXTRACT, flags=re.S)
+    p_em=re.compile(RE_EM_TAG)
+    try:
+        c=p_con.search(html).group("content")
+        m=p_list.finditer(c)
+        return [(p_em.sub("", n.group("title")), n.group("url")) for n in m]
+    except Exception as e:
+        print(str(e))
+        return None
+    
+RETEXT_HtmlTag=r'<[^>]*?>'
+RETEXT_StyleAndScript=r'(<style.*?>.*?</style>)|(<script.*?>.*?</script>)'
+RETEXT_BlankLine=r'^\s*$'
+RE_ARTICLECONTENT=r'<main>(?P<content>.*?)</main>'
+    
+def prettyhtml(html):
+    p_content=re.compile(RE_ARTICLECONTENT, flags=re.S)
+    p_htmltag=re.compile(RETEXT_HtmlTag,re.S)
+    p_styleandscript=re.compile(RETEXT_StyleAndScript,re.S)
+    p_blankline=re.compile(RETEXT_BlankLine)
+    
+    s=""
+    try:
+        s=p_content.search(html).group("content")
+
+        p_head=re.compile(r"^.*?本文链接.*?(</a>)", re.S)
+        p_tail=re.compile(r"展开阅读全文.*",re.S)
+        s=p_head.sub("", s)
+        s=p_tail.sub("", s)
+
+        s=p_htmltag.sub("", p_styleandscript.sub("", s))
+
+        lines=(p_blankline.sub("",line) for line in s.split("\n"))
+        s="\r\n".join(i for i in lines if i)
+        from html.parser import unescape
+        s=unescape(s)
+    except Exception as e:
+        print(str(e))
+    return s
+
+class TheApp(wx.App):
+    def OnInit (self):
+        frame=MainFrame()
+        self.SetTopWindow(frame)
+        frame.Show()
+        return True
+
 def main():
-    app=ThisApp()
+    app=TheApp()
     app.MainLoop()
-    
+
 if __name__=="__main__":
     main()
-    
+        
